@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.toc
+*.out
+*.lof
+*.lot
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.pdf
+
+# LaTeX report & docs (kept locally, not in repo)
+docs/
+report/
+
+# Data and metrics (generated at runtime)
+data/
+metrics/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# uv lock (large, auto-generated)
+uv.lock
+
+# Pytest
+.pytest_cache/
