@@ -111,9 +111,9 @@ uv run python experiments/zero_shot_demo.py
 | Fastest Recovery | H-LinUCB | Δ=0.132 | OSS |
 | Zero-Shot Gap | H-LinUCB | +0.132 | vs LinUCB (same policy) |
 
-- **5/7** hybrid agents outperform classical on engagement (best vs best)
-- **6/7** hybrid agents outperform classical on revenue (best vs best)
-- **Thompson** and **NeuralTS** are exceptions: stochastic posterior sampling conflicts with global model smoothing
+- **1/7 Strict Dominance (Win-Win)**: H-DeepBandit × ε-Constraint improves BOTH engagement (+0.070) and revenue (+0.012).
+- **5/7 Favorable Trade-offs**: Most hybrid agents significantly improve revenue (up to +0.014) with a slight engagement drop.
+- **1/7 Classical Wins (Lose-Lose)**: Thompson Sampling degrades under hybridization due to the global model smoothing.
 
 ---
 

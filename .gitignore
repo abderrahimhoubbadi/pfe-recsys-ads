@@ -33,7 +33,6 @@ archive/
 
 # Data and metrics (generated at runtime)
 data/
-metrics/
 
 # Old models
 models/
