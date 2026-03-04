@@ -15,7 +15,8 @@ pfe-recsys-ads/
 │   ├── mega_semantic_comparison.py # Main benchmark (16 agents × 10 policies)
 │   ├── best_across_policies.py     # Best-policy-per-agent analysis
 │   ├── regenerate_best_plots.py    # Regenerate trajectory & Pareto plots
-│   └── zero_shot_demo.py           # Zero-shot transfer demonstration
+│   ├── zero_shot_demo.py           # Zero-shot transfer demonstration
+│   └── generate_delta_joint_plot.py# Joint delta analysis 2D plot
 │
 ├── src/
 │   ├── agents/                     # 16 agent implementations
