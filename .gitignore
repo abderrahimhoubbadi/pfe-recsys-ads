@@ -24,10 +24,19 @@ wheels/
 # LaTeX report & docs (kept locally, not in repo)
 docs/
 report/
+pfe-report/
+documentation/
+rapport_pfe/
+
+# Archived legacy code (previous project phases)
+archive/
 
 # Data and metrics (generated at runtime)
 data/
 metrics/
+
+# Old models
+models/
 
 # IDE
 .idea/
@@ -43,3 +52,8 @@ uv.lock
 
 # Pytest
 .pytest_cache/
+
+# Guides and reference files
+Guide_Rapport_PFE.pdf
+
+.env

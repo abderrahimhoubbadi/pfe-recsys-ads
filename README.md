@@ -1,8 +1,8 @@
-# 🎯 Multi-Objective Ad Recommendation System
+# 🎯 Multi-Objective Semantic Ad Recommendation System
 
-A comprehensive multi-objective contextual bandit system for ad recommendation, implementing **7 bandit estimators** and **10 MOO policies** with real-time infrastructure (Kafka + Redis).
+A contextual bandit system for ad recommendation research, comparing **16 agents** across **10 MOO policies** in a semantic cold-start environment.
 
-> **PFE Project** — Houbbadi Abderrahim, February 2026
+> **PFE Project** — Houbbadi Abderrahim, 2026
 
 ---
 
@@ -10,132 +10,130 @@ A comprehensive multi-objective contextual bandit system for ad recommendation, 
 
 ```text
 pfe-recsys-ads/
-├── config/
-│   └── settings.py              # All hyperparameters (centralized)
+│
+├── experiments/                    # ← Main benchmark scripts
+│   ├── mega_semantic_comparison.py # Main benchmark (16 agents × 10 policies)
+│   ├── best_across_policies.py     # Best-policy-per-agent analysis
+│   ├── regenerate_best_plots.py    # Regenerate trajectory & Pareto plots
+│   └── zero_shot_demo.py           # Zero-shot transfer demonstration
+│
 ├── src/
-│   ├── agents/                   # 7 bandit estimators
-│   │   ├── base_moo_agent.py     # Abstract multi-objective interface
-│   │   ├── linucb_agent.py       # LinUCB (Sherman-Morrison)
+│   ├── agents/                     # 16 agent implementations
+│   │   ├── base_agent.py           # Abstract base class
+│   │   ├── base_moo_agent.py       # MOO interface
+│   │   ├── linucb_agent.py         # Classical LinUCB
 │   │   ├── thompson_sampling_agent.py
-│   │   ├── neural_ucb_agent.py   # NeuralUCB (PyTorch)
-│   │   ├── neural_ts_agent.py    # Neural Thompson Sampling
-│   │   ├── deep_bandit_agent.py  # Bootstrap ensemble
-│   │   ├── offline_online_agent.py
-│   │   └── delayed_feedback_agent.py
-│   ├── env/                      # Environment simulation
-│   │   ├── context_generator.py  # Synthetic user contexts
-│   │   └── reward_simulator.py   # Click + Revenue simulation
-│   ├── policy/                   # 10 MOO policies
-│   │   ├── moo_policies.py       # Scalarization, ε-Constraint, Pareto
-│   │   ├── pareto_utils.py       # Pareto dominance utilities
-│   │   ├── exact_moo/            # MOBB, TwoPhase, OSS, MODP, MOA*
-│   │   └── metaheuristics/       # NSGA-II, MOEA/D
-│   ├── infra/                    # Real-time infrastructure
-│   │   ├── kafka_messenger.py    # Kafka producer/consumer
-│   │   └── redis_client.py       # Model state persistence
-│   └── evaluation/
-│       └── ips_evaluator.py      # Off-policy evaluation (IPS)
-├── experiments/                  # Runnable benchmarks
-│   ├── offline_simulation.py     # Single-agent offline test
-│   ├── realtime_simulation.py    # Kafka + Redis real-time loop
-│   ├── global_comparison.py      # 7×10 = 70 combination benchmark
-│   ├── moo_benchmark.py          # MOO policy comparison
-│   └── benchmark_large_k.py      # Scalability test (K=100)
-├── tests/                        # Unit tests
-├── docker-compose.yml            # Kafka + ZooKeeper + Redis
-├── pyproject.toml                # Dependencies (uv)
-└── requirements.txt              # pip-compatible dependencies
+│   │   ├── neural_ucb_agent.py     # NeuralUCB (PyTorch)
+│   │   ├── neural_ts_agent.py      # NeuralTS
+│   │   ├── deep_bandit_agent.py    # DeepBandit
+│   │   ├── offline_online_agent.py # Offline2Online
+│   │   ├── delayed_feedback_agent.py
+│   │   ├── global_semantic_linucb.py   # H-LinUCB (hybrid)
+│   │   ├── global_semantic_neural.py   # H-NeuralUCB, H-NeuralTS, H-DeepBandit
+│   │   ├── global_semantic_others.py   # H-Offline2On, H-DelayedFB, H-Thompson
+│   │   ├── multi_obj_agent.py
+│   │   └── llm_agents/             # LlamaReasoning, LlamaInstruct
+│   │
+│   ├── policy/                     # 10 MOO policies
+│   │   ├── moo_policies.py         # Scalar, ε-Constraint, Pareto-Ch
+│   │   ├── exact_moo/              # MOBB, TwoPhase, OSS, MODP, MOA*
+│   │   └── metaheuristics/         # NSGA-II, MOEA/D
+│   │
+│   ├── env/
+│   │   ├── semantic_env/           # SemanticRewardSimulator, TextDatasetLoader
+│   │   ├── reward_simulator.py
+│   │   └── context_generator.py
+│   │
+│   ├── llm/                        # SentenceTransformer, Ollama, Gemini clients
+│   └── utils/                      # Math utilities (Sherman-Morrison, etc.)
+│
+├── metrics/                        # ← Final benchmark results
+│   ├── eng_matrix.csv              # 16×10 engagement scores
+│   ├── rev_matrix.csv              # 16×10 revenue scores
+│   ├── time_matrix.csv             # 16×10 execution times
+│   ├── trajectories_best_policy.json  # Per-iteration data (best policy/agent)
+│   ├── zero_shot_transfer_demo.png
+│   ├── best_across_policies_bars.png
+│   ├── hybridization_delta_best_vs_best.png
+│   ├── trajectory_cumulative_engagement.png
+│   ├── trajectory_post_shock_recovery.png
+│   ├── mega_pareto.png
+│   ├── best_of_class_pareto.png
+│   ├── mega_heatmap_engagement.png
+│   ├── mega_heatmap_revenue.png
+│   ├── mega_heatmap_time.png
+│   └── radar_capabilities.png
+│
+├── data/                           # Raw datasets
+├── config/                         # Hyperparameters and env settings
+│
+├── archive/                        # ← Previous project phases
+│   ├── phase1_realworld_offline/   # IPS & Rejection Sampling on Criteo/OBD
+│   ├── phase2_infrastructure/      # Redis + Kafka real-time pipeline
+│   ├── phase3_autoencoders/        # VAE-based representation learning
+│   ├── phase4_early_benchmarks/    # Superseded benchmark scripts
+│   ├── phase5_scripts_debug/       # Test & debug utilities
+│   └── old_results_and_plots/      # Plots from phases 1–4
+│
+└── documentation/                  # LaTeX reports & presentations
+    ├── pfe-presentation/
+    ├── report/
+    ├── docs/
+    └── pfe-report/
 ```
 
-## ✨ Features
+---
 
-### 7 Bandit Estimators
-
-| Estimator | Type | Exploration Strategy |
-|-----------|------|---------------------|
-| **LinUCB** | Linear | Upper Confidence Bound (deterministic) |
-| **Thompson Sampling** | Linear/Bayesian | Posterior sampling (stochastic) |
-| **NeuralUCB** | Neural | Gradient-based uncertainty |
-| **Neural Thompson Sampling** | Neural | Parameter perturbation |
-| **Deep Bandits** | Neural/Ensemble | Bootstrap uncertainty (5 networks) |
-| **Offline-to-Online** | Hybrid | Pre-train on logs, then LinUCB online |
-| **Delayed Feedback** | Linear | Handles delayed reward signals |
-
-### 10 MOO Policies
-
-| Family | Policies |
-|--------|----------|
-| **Scalarization** | Linear Scalarization, ε-Constraint, Pareto-Chebyshev |
-| **Exact Methods** | MOBB, Two-Phase, OSS, MODP, MOA* |
-| **Metaheuristics** | NSGA-II, MOEA/D |
-
-### Real-Time Infrastructure
-
-- **Apache Kafka** — Event streaming for ad requests
-- **Redis** — Persistent model state (A⁻¹, b matrices)
-- **Docker Compose** — One-command infrastructure setup
-
-## 🚀 Quick Start
+## 🚀 Running the Benchmark
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
-# or with uv:
-uv sync
+# Run the full 16-agent × 10-policy benchmark
+uv run python experiments/mega_semantic_comparison.py
 
-# 2. Run the 70-combination global benchmark
-python experiments/global_comparison.py
+# Re-generate all plots using best policy per agent (requires saved CSV matrices)
+uv run python experiments/regenerate_best_plots.py
 
-# 3. Run with K=100 arms (scalability test)
-python experiments/global_comparison.py --k 100
+# Generate best-vs-best comparison tables and bar charts
+uv run python experiments/best_across_policies.py
 
-# 4. (Optional) Start real-time infrastructure
-docker compose up -d
-python experiments/realtime_simulation.py
+# Generate the focused zero-shot transfer demonstration
+uv run python experiments/zero_shot_demo.py
 ```
 
-## 📊 Key Results
+---
 
-### K=5 Arms (500 iterations)
+## 🏆 Key Results
 
-| Estimator | Best Policy | CTR | Revenue |
-|-----------|-------------|-----|---------|
-| **Thompson Sampling** | **NSGA-II** | **0.584** | **0.217** |
-| LinUCB | NSGA-II | 0.534 | 0.210 |
-| DelayedFB | Scalar | 0.566 | 0.203 |
+| Metric | Winner | Score | Policy |
+|:---|:---|:---:|:---|
+| Best Engagement | H-DeepBandit | 0.7532 | Pareto-Ch |
+| Best Revenue | H-DeepBandit | **0.0944** | ε-Constraint |
+| Fastest Recovery | H-LinUCB | Δ=0.132 | OSS |
+| Zero-Shot Gap | H-LinUCB | +0.132 | vs LinUCB (same policy) |
 
-### K=100 Arms (Scalability)
+- **5/7** hybrid agents outperform classical on engagement (best vs best)
+- **6/7** hybrid agents outperform classical on revenue (best vs best)
+- **Thompson** and **NeuralTS** are exceptions: stochastic posterior sampling conflicts with global model smoothing
 
-| Estimator | Best Policy | CTR | Revenue |
-|-----------|-------------|-----|---------|
-| **LinUCB** | **NSGA-II** | **0.556** | **0.227** |
-| Thompson | MODP | 0.542 | 0.216 |
-| DelayedFB | MOA* | 0.544 | 0.225 |
+---
 
-### Key Findings
+## 🧩 Agent Architecture
 
-- **Thompson Sampling** dominates for small K (Bayesian exploration adapts naturally)
-- **LinUCB** scales better to large K (data-efficient linear model)
-- **NSGA-II** is the most robust MOO policy across both scenarios
-- Execution time varies 800× between LinUCB (~300ms) and NeuralUCB (~24s) at K=100
+| Family | Agents | Description |
+|:---|:---|:---|
+| **Classical** | LinUCB, Thompson, NeuralUCB, NeuralTS, DeepBandit, Offline2On, DelayedFB | Disjoint per-arm models |
+| **Hybrid** | H-LinUCB, H-Thompson, H-NeuralUCB, H-NeuralTS, H-DeepBandit, H-Offline2On, H-DelayedFB | Global semantic model via `all-MiniLM-v2` |
+| **LLM** | LlamaReasoning, LlamaInstruct | Local Ollama inference |
 
-## 🧪 Tests
+---
 
-```bash
-pytest tests/ -v
-```
+## 📦 Archive Index
 
-## 🛠 Tech Stack
-
-| Component | Technology |
-|-----------|-----------|
-| Language | Python 3.12 |
-| Deep Learning | PyTorch (CUDA) |
-| Message Queue | Apache Kafka (confluent-7.4) |
-| State Store | Redis 7.0 |
-| Orchestration | Docker Compose |
-| Package Manager | uv / pip |
-
-## 📄 License
-
-Academic project — PFE 2026.
+| Folder | Phase | Key Technology |
+|:---|:---|:---|
+| `archive/phase1_realworld_offline/` | 1 | IPS, Rejection Sampling, Criteo dataset |
+| `archive/phase2_infrastructure/` | 2 | Redis, Kafka, real-time loop |
+| `archive/phase3_autoencoders/` | 3 | VAE, PyTorch representation learning |
+| `archive/phase4_early_benchmarks/` | 4 | Preliminary bandit comparisons |
+| `archive/phase5_scripts_debug/` | 5 | Data download, connection tests |
+| `archive/old_results_and_plots/` | All | Historical plots and results |
