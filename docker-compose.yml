@@ -1,15 +1,81 @@
-version: '3.8'
+# ═══════════════════════════════════════════════════════════
+# Docker Compose — Option A: Local Deployment
+# ═══════════════════════════════════════════════════════════
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose logs -f api    # Follow API logs
+#   docker compose down           # Stop all services
+# ═══════════════════════════════════════════════════════════
+
 services:
+  # ── Recommendation API ──
+  api:
+    build: .
+    container_name: recsys-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      - MODEL_TYPE=H-DeepBandit
+      - MOO_POLICY=epsilon_constraint
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - QUEUE_BACKEND=kafka
+      - STATE_BACKEND=redis
+    restart: unless-stopped
+
+  # ── Streaming Consumer (closed loop) ──
+  streaming:
+    build: .
+    container_name: recsys-streaming
+    command: [ "uv", "run", "python", "-m", "src.streaming.consumer" ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - QUEUE_BACKEND=kafka
+      - STATE_BACKEND=redis
+    restart: unless-stopped
+
+  # ── Redis (Model State Store) ──
+  redis:
+    image: redis:7-alpine
+    container_name: recsys-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Zookeeper (Kafka dependency) ──
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.0
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: recsys-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
+    restart: unless-stopped
 
+  # ── Kafka (Message Streaming) ──
   kafka:
-    image: confluentinc/cp-kafka:7.4.0
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: recsys-kafka
     depends_on:
       - zookeeper
     ports:
@@ -17,13 +83,23 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    restart: unless-stopped
 
-  redis:
-    image: redis:7.0-alpine
+  # ── Grafana (Monitoring Dashboard) ──
+  grafana:
+    image: grafana/grafana:latest
+    container_name: recsys-grafana
     ports:
-      - "6379:6379"
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=devoteam2026
+    volumes:
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  grafana-data:
