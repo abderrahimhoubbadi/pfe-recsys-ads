@@ -3,7 +3,7 @@ Pydantic schemas for the Recommendation API.
 """
 
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List
 
 
 class AdInfo(BaseModel):
@@ -51,8 +51,17 @@ class FeedbackRequest(BaseModel):
         description="User profile text (needed for model update)",
     )
     ad_text: str = Field(
-        ...,
-        description="Ad description text (needed for model update)",
+        default="",
+        description="Ad description text (optional, for logging)",
+    )
+    feedback_type: str = Field(
+        default="full",
+        description=(
+            "Type of feedback: "
+            "'click' = immediate click signal (revenue unknown yet), "
+            "'conversion' = delayed conversion with final revenue, "
+            "'full' = both click and revenue available at once"
+        ),
     )
     click: bool = False
     conversion: bool = False
@@ -82,6 +91,7 @@ class MetricsResponse(BaseModel):
 
     total_requests: int = 0
     total_feedbacks: int = 0
+    pending_conversions: int = 0
     avg_ctr: float = 0.0
     avg_revenue: float = 0.0
     avg_latency_ms: float = 0.0

@@ -182,8 +182,52 @@ def test_full_pipeline():
     print(f"   Tech Gamer → Ad #{ad_id} ({ad_name}) | eng={eng:+.4f} rev={rev:+.4f}")
     print(f"   ✅ Zero-shot transfer: new ads are immediately selectable")
 
-    # ── 7. Test FastAPI app ──
-    print("\n[7/7] Testing FastAPI app endpoints...")
+    # ── 7. Test delayed feedback ──
+    print("\n[7/9] Testing delayed feedback (click → pending → conversion)...")
+    user = "développeur 30 ans cloud computing"
+
+    # Recommend
+    ad_id, eng, rev, lat = service.recommend(user_text=user, available_ads=all_ads)
+    print(f"   Recommendation: ad_id={ad_id}")
+
+    # Phase 1: Click only (revenue pending)
+    service.process_feedback(
+        user, ad_id, click=True, conversion=False, revenue=0.0, feedback_type="click"
+    )
+    m = service.get_metrics()
+    assert m["pending_conversions"] == 1, (
+        f"Expected 1 pending, got {m['pending_conversions']}"
+    )
+    print(f"   After click:      pending={m['pending_conversions']} ✓")
+
+    # Phase 2: Delayed conversion arrives
+    service.process_feedback(
+        user,
+        ad_id,
+        click=False,
+        conversion=True,
+        revenue=0.10,
+        feedback_type="conversion",
+    )
+    m = service.get_metrics()
+    assert m["pending_conversions"] == 0, (
+        f"Expected 0 pending, got {m['pending_conversions']}"
+    )
+    assert m["avg_revenue"] > 0, "Revenue should be positive after conversion"
+    print(
+        f"   After conversion: pending={m['pending_conversions']}, revenue={m['avg_revenue']:.4f} ✓"
+    )
+
+    # Full feedback (backwards compatible)
+    service.process_feedback(
+        user, ad_id, click=True, conversion=True, revenue=0.08, feedback_type="full"
+    )
+    m = service.get_metrics()
+    print(f"   Full feedback:    pending={m['pending_conversions']} ✓")
+    print(f"   ✅ Delayed feedback: click → pending → conversion → correction applied")
+
+    # ── 8. Test FastAPI app ──
+    print("\n[8/9] Testing FastAPI app endpoints...")
     from fastapi.testclient import TestClient
     from src.api.main import app
 

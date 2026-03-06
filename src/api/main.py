@@ -89,6 +89,11 @@ async def feedback(request: FeedbackRequest):
     """
     Process user feedback (click, conversion, revenue).
 
+    Supports delayed feedback via `feedback_type`:
+    - "click": Immediate click signal. Revenue stays pending.
+    - "conversion": Delayed conversion with final revenue (correction applied).
+    - "full": Both click and revenue available simultaneously.
+
     This closes the loop: the agent updates its model based on the
     observed reward, improving future recommendations.
     """
@@ -98,6 +103,7 @@ async def feedback(request: FeedbackRequest):
         click=request.click,
         conversion=request.conversion,
         revenue=request.revenue,
+        feedback_type=request.feedback_type,
     )
 
     return FeedbackResponse(

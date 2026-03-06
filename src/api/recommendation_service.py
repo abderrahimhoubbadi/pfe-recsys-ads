@@ -78,6 +78,10 @@ class RecommendationService:
         self.save_every_n = save_every_n
         self._feedback_since_save = 0
 
+        # ── Delayed feedback buffer ──
+        # Keyed by (ad_id, user_hash) → {user_emb, arm_idx, click, timestamp}
+        self._pending_conversions: Dict[tuple, dict] = {}
+
         if redis_host:
             try:
                 from src.infra.redis_client import RedisStateStore
@@ -199,7 +203,7 @@ class RecommendationService:
         )
 
     # ════════════════════════════════════════════════════════════
-    # Feedback (Closed Loop)
+    # Feedback (Closed Loop — Delayed Feedback Aware)
     # ════════════════════════════════════════════════════════════
 
     def process_feedback(
@@ -209,9 +213,20 @@ class RecommendationService:
         click: bool,
         conversion: bool,
         revenue: float,
+        feedback_type: str = "full",
     ) -> bool:
         """
-        Process user feedback and update the model.
+        Process user feedback with delayed feedback support.
+
+        Three feedback types:
+        - "click": Immediate click signal. Revenue is unknown → only update
+          the click objective. The impression is stored in the pending buffer
+          awaiting a future conversion signal.
+        - "conversion": Delayed conversion signal. The revenue is now known →
+          update the revenue objective with a correction factor to compensate
+          for the delay bias.
+        - "full": Both click and revenue are available simultaneously (e.g.,
+          in simulation or when conversion is instantaneous).
 
         Returns True if the model was updated.
         """
@@ -221,18 +236,80 @@ class RecommendationService:
 
         arm_idx = self.ad_id_to_arm[ad_id]
         user_emb = self.encoder.get_embedding(user_text)
+        pending_key = (ad_id, hash(user_text[:50]))
 
-        rewards = {
-            "click": 1.0 if click else 0.0,
-            "revenue": revenue,
-        }
+        if feedback_type == "click":
+            # ── Phase 1: Immediate click feedback ──
+            # Update ONLY the click objective; revenue is still unknown
+            rewards = {"click": 1.0 if click else 0.0}
+            self.agent.update(user_emb, arm_idx, rewards)
 
-        self.agent.update(user_emb, arm_idx, rewards)
+            # Store in pending buffer for future conversion matching
+            self._pending_conversions[pending_key] = {
+                "user_emb": user_emb,
+                "arm_idx": arm_idx,
+                "click": click,
+                "timestamp": time.time(),
+            }
+
+            self._ctr_window.append(1.0 if click else 0.0)
+            logger.debug(
+                f"Click feedback: ad_id={ad_id}, click={click} (revenue pending)"
+            )
+
+        elif feedback_type == "conversion":
+            # ── Phase 2: Delayed conversion feedback ──
+            # Apply correction factor: revenue / confirm_rate to compensate
+            # for the bias that recent events have lower observed revenue
+            pending = self._pending_conversions.pop(pending_key, None)
+
+            if pending:
+                # Matched with a previous click — use stored embedding
+                stored_emb = pending["user_emb"]
+                stored_arm = pending["arm_idx"]
+            else:
+                # No matching pending click — use current context
+                stored_emb = user_emb
+                stored_arm = arm_idx
+                logger.debug(f"Conversion without matching click for ad_id={ad_id}")
+
+            # Correction factor: boost revenue to compensate for delayed observations
+            # confirm_rate = proportion of impressions that have received conversion feedback
+            total = max(self.total_feedbacks, 1)
+            n_conversions = total - len(self._pending_conversions)
+            confirm_rate = max(n_conversions / total, 0.1)
+            corrected_revenue = revenue / confirm_rate
+
+            rewards = {"revenue": corrected_revenue}
+            self.agent.update(stored_emb, stored_arm, rewards)
+
+            self._rev_window.append(revenue)  # Track raw revenue, not corrected
+            logger.debug(
+                f"Conversion feedback: ad_id={ad_id}, revenue={revenue:.4f}, "
+                f"corrected={corrected_revenue:.4f} (confirm_rate={confirm_rate:.2f})"
+            )
+
+        else:  # "full"
+            # ── Both click and revenue available simultaneously ──
+            rewards = {
+                "click": 1.0 if click else 0.0,
+                "revenue": revenue,
+            }
+            self.agent.update(user_emb, arm_idx, rewards)
+
+            self._ctr_window.append(1.0 if click else 0.0)
+            self._rev_window.append(revenue)
+
+            # Remove from pending if it was there
+            self._pending_conversions.pop(pending_key, None)
+
+            logger.debug(
+                f"Full feedback: ad_id={ad_id}, click={click}, "
+                f"conversion={conversion}, revenue={revenue:.4f}"
+            )
 
         # Track metrics
         self.total_feedbacks += 1
-        self._ctr_window.append(1.0 if click else 0.0)
-        self._rev_window.append(revenue)
 
         # Auto-save to Redis every N feedbacks
         self._feedback_since_save += 1
@@ -240,12 +317,25 @@ class RecommendationService:
             self._save_state()
             self._feedback_since_save = 0
 
-        logger.debug(
-            f"Feedback: ad_id={ad_id}, click={click}, "
-            f"conversion={conversion}, revenue={revenue:.4f}"
-        )
+        # Expire old pending conversions (older than 24h)
+        self._expire_pending(max_age_seconds=86400)
 
         return True
+
+    def _expire_pending(self, max_age_seconds: float = 86400) -> None:
+        """Remove pending conversions older than max_age_seconds."""
+        now = time.time()
+        expired = [
+            k
+            for k, v in self._pending_conversions.items()
+            if now - v["timestamp"] > max_age_seconds
+        ]
+        for k in expired:
+            pending = self._pending_conversions.pop(k)
+            # Expire with revenue=0 (assume no conversion happened)
+            rewards = {"revenue": 0.0}
+            self.agent.update(pending["user_emb"], pending["arm_idx"], rewards)
+            logger.debug(f"Expired pending conversion: {k}")
 
     # ════════════════════════════════════════════════════════════
     # Metrics
@@ -255,6 +345,7 @@ class RecommendationService:
         return {
             "total_requests": self.total_requests,
             "total_feedbacks": self.total_feedbacks,
+            "pending_conversions": len(self._pending_conversions),
             "avg_ctr": float(np.mean(self._ctr_window)) if self._ctr_window else 0.0,
             "avg_revenue": float(np.mean(self._rev_window))
             if self._rev_window
