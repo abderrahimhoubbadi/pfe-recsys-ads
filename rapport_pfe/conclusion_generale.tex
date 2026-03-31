@@ -1,0 +1,38 @@
+%========================================================================%
+%  Conclusion Générale                                                     %
+%========================================================================%
+
+\chapter*{Conclusion Générale}
+\addcontentsline{toc}{chapter}{Conclusion Générale}
+
+\section*{Synthèse des Contributions}
+
+Ce Projet de Fin d'Études avait pour ambition de concevoir, implémenter et valider un \textbf{Système de Recommandation Publicitaire Multi-Objectif} capable d'opérer en temps réel. Le travail réalisé couvre l'ensemble du spectre théorie--expérimentation--industrialisation.
+
+\textbf{Chapitre 1} a posé le cadre général : écosystème publicitaire digital, systèmes de recommandation, et mécanisme du RTB. La problématique centrale a été formalisée --- optimiser simultanément l'engagement (CTR) et le revenu (eCPM) sous les contraintes temporelles du Real-Time Bidding.
+
+\textbf{Chapitre 2} a établi le cadre théorique : formalisation MOIP \parencite{deb2001multi}, état de l'art des agents bandits \parencite{li2010contextual, riquelme2018deep} et des politiques MOO \parencite{deb2002fast,ehrgott2005multicriteria}. L'approche hybride sémantique a été proposée, fondée sur l'encodage SentenceTransformer \parencite{reimers2019sentence} et le modèle global partagé.
+
+\textbf{Chapitre 3} a validé l'approche via un benchmark exhaustif de \textbf{142 configurations}. Le champion identifié --- \textbf{H-DeepBandit $\times$ $\varepsilon$-Constraint} --- est le seul point conjoint $(0.663,\ 0.094)$ dominant strictement son homologue classique sur les deux objectifs simultanément. Le transfert zéro-shot démontre un avantage de $+0.132$ en engagement face au cold-start.
+
+\textbf{Chapitre 4} a traduit ce modèle en un système opérationnel : architecture closed-loop, gestion du delayed feedback (FALCON \parencite{ktena2019addressing}), déploiement cloud-native (Docker / GCP Cloud Run). La validation confirme une latence de $\sim 9$~ms, un débit de 84~req/s, et zéro erreur sous charge.
+
+\section*{Apport pour Devoteam Maroc}
+
+Ce projet livre à Devoteam un \textbf{accélérateur technologique} réutilisable pour ses clients :
+
+\begin{itemize}
+    \item Une architecture \textbf{cloud-native} (Docker $\to$ GCP) via le pattern Factory.
+    \item Un système \textbf{auto-adaptatif} qui apprend en continu sans re-entraînement offline.
+    \item Un \textbf{framework de benchmark} (142 configurations) permettant d'évaluer objectivement tout nouvel agent ou politique.
+\end{itemize}
+
+\section*{Perspectives}
+
+\begin{enumerate}
+    \item \textbf{Intégration Google Ads API} : validation en conditions de production réelles.
+    \item \textbf{Deep Reinforcement Learning} : exploration des architectures PPO/SAC avec historique d'états.
+    \item \textbf{A/B Testing} : quantification du gain business réel par rapport aux politiques existantes.
+    \item \textbf{Multi-tenant} : adaptation de l'architecture pour servir plusieurs clients simultanément.
+    \item \textbf{Fine-tuning des embeddings} : spécialisation de \texttt{all-MiniLM-L6-v2} sur des données publicitaires réelles.
+\end{enumerate}

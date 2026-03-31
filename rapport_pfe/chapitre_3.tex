@@ -1,0 +1,225 @@
+%========================================================================%
+%  Chapitre 3 — Implémentation Technique & Architecture de Déploiement   %
+%========================================================================%
+
+\chapter{Implémentation Technique \& Architecture de Déploiement}
+\label{chap:implementation}
+
+%------------------------------------------------------------------------
+%  Introduction du chapitre
+%------------------------------------------------------------------------
+\section*{Introduction}
+\addcontentsline{toc}{section}{Introduction}
+
+Le passage d'un modèle mathématique expérimental à une solution industrielle logicielle nécessite de surmonter d'importants défis d'ingénierie. Si le Chapitre 2 a permis d'isoler et de valider l'approche algorithmique la plus performante --- le \textit{Global Semantic DeepBandit} (H-DeepBandit) couplé à la politique $\varepsilon$-\textit{Constraint} --- ce troisième chapitre dévoile sa traduction en un système robuste, capable d'opérer en temps réel (\textit{closed-loop}).
+
+L'objectif de cette partie est double : d'une part, détailler l'architecture logicielle MLOps conçue pour soutenir les inférences sous de fortes contraintes de latence (inférieures à 10~ms) tout en gérant l'intégration continue du \textit{feedback} avec la problématique de la récompense retardée (\textit{delayed feedback}). D'autre part, présenter les choix d'infrastructure et de déploiement qui permettent à cette solution d'être déployée sur le Cloud (GCP) conformément aux standards de \textbf{Devoteam}, garantissant ainsi sa réutilisabilité pour différents clients.
+
+
+%------------------------------------------------------------------------
+%  3.1 — Architecture Système MLOps
+%------------------------------------------------------------------------
+\section{Architecture Système MLOps}
+\label{sec:architecture_mlops}
+
+\subsection{Conception du Pipeline \textit{Closed-Loop}}
+
+Dans un environnement publicitaire programmatique, le système de recommandation ne peut se contenter d'être un service passif. Il doit s'insérer dans une \textbf{boucle fermée} (\textit{closed-loop}) où chaque recommandation génère un point de donnée qui, en retour, met à jour le modèle d'exploration-exploitation de l'agent.
+
+Le flux de données global de notre architecture temps réel est illustré par la Figure~\ref{fig:closed_loop_pipeline}.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.95\textwidth}{!}{
+\begin{tikzpicture}[
+    node distance=1.5cm and 2cm,
+    block/.style={rectangle, draw=emiBlue, fill=emiBlue!10, text width=2.8cm, minimum height=1.5cm, align=center, rounded corners, font=\small},
+    db/.style={cylinder, draw=black, fill=gray!10, shape border rotate=90, aspect=0.25, text width=2cm, minimum height=1.5cm, align=center, font=\small},
+    arrow/.style={-{Stealth[length=3mm]}, thick, emiBlue},
+    dashed_arrow/.style={-{Stealth[length=3mm]}, dashed, thick, emiRed}
+]
+    % Nodes
+    \node[block] (impression) {Capture de l'Impression\\(\textit{Kafka / PubSub})};
+    \node[block, right=of impression] (encoding) {Encodage Sémantique\\(SentenceTransformer)};
+    \node[block, right=of encoding] (api) {Service de Recommandation\\(API REST)};
+    \node[db, below=of api] (redis) {State Store\\(Redis / Memorystore)};
+    \node[block, left=of redis] (feedback) {Gestion du Feedback\\(\textit{Kafka / PubSub})};
+    
+    % Connections
+    \draw[arrow] (impression) -- node[above, font=\scriptsize] {$\mathbf{x}_u, \mathcal{A}_t$} (encoding);
+    \draw[arrow] (encoding) -- node[above, font=\scriptsize] {Vecteurs $\approx \mathbb{R}^{768}$} (api);
+    \draw[arrow] (api) -- node[right, font=\scriptsize] {Sauvegarde du Modèle} (redis);
+    \draw[dashed_arrow] (api) -- node[left, font=\scriptsize] {Chargement ($\mu, \sigma$)} (redis);
+    
+    \draw[arrow] (api) .. controls +(right:3cm) and +(right:4cm) .. node[right, font=\scriptsize, text=black] {Affichage + Interaction} (feedback);
+    \draw[arrow] (feedback) -- node[above, font=\scriptsize] {MàJ de l'Agent ($\mathbf{r}_t$)} (api);
+
+\end{tikzpicture}
+}
+\caption{Architecture fonctionnelle de la boucle de décision (\textit{Closed-Loop}).}
+\label{fig:closed_loop_pipeline}
+\end{figure}
+
+Cette architecture garantit que l'agent \textbf{H-DeepBandit} re-calcule continuellement son incertitude (UCB) au fur et à mesure de l'arrivée des données, brisant ainsi la barrière de l'\textit{offline training}.
+
+\subsection{Intégration du Modèle Champion}
+
+Le choix de l'agent s'est porté sur l'approche neuro-sémantique \texttt{GlobalSemanticDeepBandit} suite aux résultats du \textit{benchmark} (voir Chapitre 2) qui a démontré un avantage de $+\textbf{0.132}$ en transfert \textit{zero-shot} et une dominance stricte de $+\textbf{0.070}$ en engagement.
+
+Contrairement aux solutions classiques qui instancient un réseau neuronal par annonce (entraînant un \textit{cold-start} insurmontable pour les nouvelles campagnes), notre modèle utilise \textbf{un réseau global unique} traitant la concaténation de l'enchâssement utilisateur ($x_u \in \mathbb{R}^{384}$) et de l'enchâssement de l'annonce ($x_a \in \mathbb{R}^{384}$). L'incertitude est quantifiée de manière non-paramétrique par un assemblage \textit{Bootstrap} (\textit{ensemble} de 5 réseaux parallèles).
+
+\subsection{Positionnement Technologique chez Devoteam}
+
+En tant qu'ESN de premier plan, \textbf{Devoteam} requiert que les PoC (\textit{Proof of Concepts}) soient conçus comme des accélérateurs réutilisables. Le projet n'a donc pas été structuré comme un script monolithique, mais comme une \textbf{plateforme conteneurisée et agnostique} par rapport à l'infrastructure d'hébergement, permettant un déploiement \textit{On-Premise} ou \textit{Cloud} via un design pattern de type \textit{Factory}.
+
+
+%------------------------------------------------------------------------
+%  3.2 — Implémentation du Cœur de Décision
+%------------------------------------------------------------------------
+\section{Implémentation du Cœur de Décision}
+
+\subsection{Le Service de Recommandation}
+
+Au cœur de l'application se trouve la classe \texttt{RecommendationService}, qui agit comme contrôleur principal. Elle orchestre la traduction des identifiants (ID) d'annonces en vecteurs latents via \texttt{all-MiniLM-L6-v2}, sollicite l'estimation des rendements espérés $(\mu_{\text{click}}, UCB_{\text{click}})$ et $(\mu_{\text{rev}}, LCB_{\text{rev}})$ par le modèle H-DeepBandit, puis applique le filtre de décision multi-objectif.
+
+L'extrait de code ci-dessous illustre l'encapsulation de la logique de décision :
+
+\begin{listing}[htbp]
+\begin{minted}[frame=lines, framesep=2mm, baselinestretch=1.2, bgcolor=gray!8, fontsize=\footnotesize, breaklines]{python}
+def recommend(self, user_text: str, available_ads: List[AdInfo]):
+    # 1. Encodage Sémantique de l'utilisateur
+    user_emb = self.encoder.encode(user_text)
+    
+    available_indices = []
+    # 2. Résolution du Cold-Start (Zero-Shot) pour les nouvelles annonces
+    for ad in available_ads:
+        if ad.ad_id not in self.ad_id_to_idx:
+            ad_emb = self.encoder.encode(ad.title + " " + ad.description)
+            self.agent.expand_arms({ad.ad_id: ad_emb})
+        available_indices.append(self.ad_id_to_idx[ad.ad_id])
+        
+    # 3. Prédiction Multi-Objectif par le H-DeepBandit
+    predictions = self.agent.predict_all(context=user_emb)
+    
+    # 4. Politique de decision (eps-Constraint MOO)
+    selected_idx = epsilon_constraint_policy(
+        predictions=predictions,
+        available_indices=available_indices,
+        epsilon=self.epsilon,
+        use_conservative_constraint=True  # Utilise la Lower Confidence Bound
+    )
+    return self.idx_to_ad_id[selected_idx]
+\end{minted}
+\caption{Extrait de la méthode de recommandation principale (\texttt{RecommendationService}).}
+\label{lst:recommend_method}
+\end{listing}
+
+\subsection{L'API REST (FastAPI)}
+
+L'exposition du service se fait via le \textit{framework} asynchrone \textbf{FastAPI}, garantissant de très hautes performances I/O. L'API expose quatre \textit{endpoints} principaux :
+\begin{enumerate}
+    \item \texttt{POST /recommend} : Interface synchrone pour la sélection d'annonces.
+    \item \texttt{POST /feedback} : Collecte asynchrone ou synchrone des retours utilisateurs.
+    \item \texttt{GET /metrics} : Exposition des statistiques glissantes de performance (CTR global, RPM) pour l'intégration avec \textit{Prometheus / Grafana}.
+    \item \texttt{GET /health} : Sonde de monitoring Kubernetes/Cloud Run.
+\end{enumerate}
+
+\subsection{L'Abstraction d'Infrastructure (\textit{Factory Pattern})}
+
+Pour garantir la portabilité du code entre l'environnement de développement et les environnements de production des clients finaux, toutes les interactions d'entrée/sortie réseau utilisent le \textit{design pattern Factory} (\texttt{src/infra/factory.py}).
+
+Le code métier ne connaît que trois interfaces abstraites: \texttt{MessageProducer}, \texttt{MessageConsumer}, et \texttt{StateStore}. Lors du démarrage du service, la variable d'environnement \texttt{QUEUE\_BACKEND} détermine l'instanciation de connecteurs pour \textbf{Kafka} (développement local) ou \textbf{GCP Pub/Sub} (production serverless), assurant l'inversion de contrôle (IoC).
+
+
+%------------------------------------------------------------------------
+%  3.3 — Gestion du Feedback Retardé (Delayed Feedback)
+%------------------------------------------------------------------------
+\section{Gestion du \textit{Delayed Feedback} (FALCON)}
+\label{sec:delayed_feedback}
+
+L'un des obstacles majeurs en apprentissage par renforcement appliqué à la publicité est la nature asynchrone des signaux de récompense. Si l'interaction initiale (le clic, objectif $O_1$) est mesurée instantanément, la finalisation de l'objectif économique (la conversion / achat, objectif $O_2$) peut intervenir des heures, voire des jours plus tard.
+
+\subsection{Problématique du Biais de Pénalisation}
+Si le système met à jour son modèle immédiatement après le clic, il considèrera inévitablement que le revenu généré est nul ($\text{revenue} = 0$). Cela induit un \textbf{biais drastique} : le modèle va apprendre à sous-estimer de l'eCPM de toutes les annonces de manière systémique, conduisant la contrainte stricte de la politique $\varepsilon$-\textit{Constraint} à rejeter toutes les enchères potentiellement rentables.
+
+\subsection{Implémentation de l'Approche Inspirée de FALCON}
+Pour pallier cette asymétrie, la solution logicielle intègre un mécanisme inspiré des travaux récents de la littérature, notamment l'approche FALCON \parencite{ktena2019addressing}.
+
+L'endpoint \texttt{/feedback} traite désormais un champ supplémentaire \texttt{feedback\_type} :
+\begin{itemize}
+    \item \textbf{Type \texttt{click}} (Immédiat) : L'agent met à jour \textit{uniquement} sa tête de prédiction d'engagement. L'ID de l'impression et les vecteurs contextuels sont mis en attente (\textit{pending status}) dans un registre conservé en mémoire (sauvegardé sur Redis).
+    \item \textbf{Type \texttt{conversion}} (Asynchrone) : Le signal est réconcilié avec l'impression d'origine. Le système applique la mise à jour de la tête de prédiction des revenus.
+\end{itemize}
+
+Pour corriger les conversions qui n'arriveront jamais, l'algorithme applique une majoration temporaire du revenu pour les conversions confirmées, via un facteur de pondération dynamique \textit{confirm\_rate}. 
+$$ \text{Revenue Corrigé} = \frac{\text{Revenue Effectif}}{\text{Confirm Rate}} \quad \text{avec} \quad \text{Confirm Rate} = \frac{N_{\text{Total}} - N_{\text{Pending}}}{N_{\text{Total}}} $$
+De plus, un processus de \textit{garbage collection} s'exécute à intervalles réguliers : toute impression en attente depuis plus de 24 heures (Délai d'attribution standard en \textit{Digital Marketing}) est considérée comme perdue, et forcée à une mise à jour avec une conversion nulle, nettoyant ainsi le registre \texttt{\_pending\_conversions}.
+
+
+%------------------------------------------------------------------------
+%  3.4 — Architecture de Déploiement Cloud-Native
+%------------------------------------------------------------------------
+\section{Architecture de Déploiement Cloud-Native}
+
+\subsection{Option A : Environnement Local (\textit{Docker Compose})}
+Pour les phases de \textit{test \& learn} et le développement, la solution est entièrement packagée via Docker. Le fichier \texttt{docker-compose.yml} provisionne 5 conteneurs interdépendants formant l'architecture micro-services de base :
+\begin{enumerate}
+    \item \textbf{API FastAPI} (\texttt{recsys-api}) : L'interface d'inférence.
+    \item \textbf{Consumer Streaming} (\texttt{recsys-streaming}) : \textit{Worker} en tâche de fond assurant le \textit{closed-loop} depuis Kafka.
+    \item \textbf{Kafka \& Zookeeper} : Gestionnaire des flux d'événements (\textit{Message Broker}).
+    \item \textbf{Redis} : Stockage persistant à haute vélocité pour l'état interne (poids synaptiques de PyTorch) du \textit{H-DeepBandit}.
+    \item \textbf{Grafana} : Outil de visualisation des métriques pour la santé du Pipeline.
+\end{enumerate}
+
+\subsection{Option B : Déploiement \textit{Serverless} sur Google Cloud (Production)}
+
+Dans le cadre du pipeline Devoteam, le déploiement sur environnement cible public suit une logique de modernisation \textit{Serverless} visant la résilience et l'\textit{autoscaling} absolu. Le système transite sur \textbf{Google Cloud Platform (GCP)} (\textit{cf.} Tableau~\ref{tab:mapping_infra}).
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{l l l}
+        \toprule
+        \textbf{Composant Logique} & \textbf{Technologie Locale (Docker)} & \textbf{Équivalent Cloud (GCP)} \\
+        \midrule
+        Hébergement API & Serveur Uvicorn interne & \textbf{Cloud Run} (Autoscaling de 0 à 10) \\
+        \textit{Message Broker} & Apache Kafka & \textbf{Cloud Pub/Sub} \\
+        \textit{State Store} & Redis Alpine 7.0 & \textbf{Memorystore} (Instance managée) \\
+        Environnement de CI/CD & Compilation shell locale & \textbf{Cloud Build} + Artifact Registry \\
+        \bottomrule
+    \end{tabular}
+    \caption{Mapping de l'infrastructure logicielle.}
+    \label{tab:mapping_infra}
+\end{table}
+
+Le déploiement est intégralement automatisé via le script bash \texttt{deploy/gcp\_deploy.sh}, qui respecte l'approche *Infrastructure as Code* minimaliste. L'utilisation de Cloud Run est particulièrement adaptée aux contraintes des systèmes de recommandation : la capacité à s'éteindre à zéro (économies de coûts B2B lors d'interruptions de traffic publicitaire) et à réagir exponentiellement face à une augmentation subite du \textit{bid density}.
+
+%------------------------------------------------------------------------
+%  3.5 — Validation Expérimentale
+%------------------------------------------------------------------------
+\section{Validation de l'Architecture Fonctionnelle}
+
+La viabilité du système complet a été attestée par un test d'intégration MLOps exhaustif (\texttt{tests/test\_integration.py}) scindé en 9 étapes séquentielles reproduisant le \textit{lifecycle} réel d'un système publicitaire : \textit{Service Init} $\rightarrow$ \textit{Ad Registration} $\rightarrow$ \textit{Recommendations} $\rightarrow$ \textit{Feedback Loop} $\rightarrow$ \textit{Cold-start simulation} $\rightarrow$ \textit{Delayed feedback}.
+
+Les performances mesurées sont conformes aux attentes industrielles :
+\begin{itemize}
+    \item \textbf{Latence} : Le temps critique d'inférence (réception de l'appel HTTP, encodage sémantique à la volée du contexte, forward pass sur les 5 réseaux neuronaux du bootstrap, et sélection de la politique $\varepsilon$-\textit{Constraint}) a été mesuré à une moyenne de $\sim$\textbf{8 millisecondes} (bien en deçà du budget standard de 50~ms imposé par le RTB).
+    \item \textbf{Adaptation continue} : La boucle d'apprentissage en direct réagit avec agilité; un taux de convergence \textit{online} permettant d'atteindre un CTR moyen de $\sim 0.84$ en l'espace de 100 itérations expérimentales.
+\end{itemize}
+
+%------------------------------------------------------------------------
+%  Conclusion du chapitre
+%------------------------------------------------------------------------
+\section*{Conclusion du Chapitre}
+\addcontentsline{toc}{section}{Conclusion du Chapitre}
+
+Ce troisième et dernier chapitre de notre rapport a mis en lumière la transformation d'un postulat de recherche opérationnelle (modélisation mathématique du bandit contextuel sémantique multi-objectif) en un actif technologique tangible. 
+
+Confrontés à la problématique de la recommandation publicitaire en temps réel, nous avons bâti un système résilient grâce à :
+\begin{itemize}
+    \item L'intégration poussée d'une \textbf{API FastAPI} performante servant le modèle global à travers une inversion des dépendances MLOps.
+    \item L'improvisation d'une structure palliative au \textbf{Feedback retardé} (\textit{FALCON-inspired}) vitale pour un maintien des \textit{Quality of Services} sur la contrainte financière objective $O_2$.
+    \item Un \textbf{horizon de déploiement bicéphale} qui allie l'agilité exploratoire de \textbf{Docker} à l'élasticité à toute épreuve de l'environnement serverless \textbf{GCP} de l'entreprise d'accueil, Devoteam.
+\end{itemize}
+
+Cette implémentation permet in fine de clôturer le triptyque \textit{Théorie-Expérimentation-Industrialisation} de ce Projet de Fin d'Étude en répondant point par point à la problématique de départ.
+

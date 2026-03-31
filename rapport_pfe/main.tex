@@ -1,0 +1,137 @@
+%========================================================================%
+%  Rapport PFE — Chapitres 1 & 2                                        %
+%  Système de Recommandation Publicitaire Multi-Objectif                 %
+%  basé sur les Bandits Contextuels Sémantiques                          %
+%                                                                        %
+%  Auteur : Houbbadi Abderrahim — EMI, 2026                              %
+%========================================================================%
+
+\documentclass[12pt, a4paper, oneside]{report}
+
+%--- Encodage & Langue ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+% Note: babel-french not installed; using only inputenc/fontenc for UTF-8 French characters
+
+%--- Mise en page ---
+\usepackage[top=2.5cm, bottom=2.5cm, left=3cm, right=2.5cm]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+
+%--- Typographie ---
+\usepackage{lmodern}
+
+%--- Mathématiques ---
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{mathtools}
+
+%--- Tableaux ---
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{longtable}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+
+%--- Figures & Graphiques ---
+\usepackage{graphicx}
+\graphicspath{{../metrics/}{./img/}}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{wrapfig}
+
+%--- Couleurs & Boîtes ---
+\usepackage[dvipsnames]{xcolor}
+\usepackage[most]{tcolorbox}
+
+% Couleurs EMI personnalisées
+\definecolor{emiBlue}{HTML}{003366}
+\definecolor{emiGold}{HTML}{D4A843}
+\definecolor{emiGreen}{HTML}{2E7D32}
+\definecolor{emiRed}{HTML}{C62828}
+
+%--- TikZ ---
+\usepackage{tikz}
+\usetikzlibrary{shapes, arrows.meta, positioning, calc, decorations.pathreplacing}
+
+%--- Listes & symboles ---
+\usepackage{enumitem}
+\usepackage{pifont}
+
+%--- Code ---
+\usepackage{minted}
+\usepackage{listings}
+
+%--- Headheight fix ---
+\setlength{\headheight}{15pt}
+
+%--- Bibliographie ---
+\usepackage[backend=bibtex, style=authoryear-comp, sorting=nyt, maxbibnames=10, maxcitenames=2, url=false, doi=false]{biblatex}
+\addbibresource{biblio.bib}
+% Crochets [] pour les citations
+\renewcommand*{\bibopenparen}{[}
+\renewcommand*{\bibcloseparen}{]}
+% Lien cliquable à la fin de chaque entrée bibliographique
+\renewbibmacro{finentry}{%
+  \finentry
+  \iffieldundef{doi}%
+    {\iffieldundef{url}%
+      {}%
+      {\space\textcolor{emiBlue}{\small[\href{\thefield{url}}{\texttt{lien}}]}}}%
+    {\space\textcolor{emiBlue}{\small[\href{https://doi.org/\thefield{doi}}{\texttt{lien}}]}}%
+}
+
+%--- Hyperliens ---
+\usepackage[colorlinks=true, linkcolor=emiBlue, citecolor=emiBlue, urlcolor=emiBlue]{hyperref}
+
+%--- En-têtes & pieds de page ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\leftmark}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+%--- Début du document ---
+\begin{document}
+
+%--- Page de titre provisoire ---
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+    {\Large \textbf{École Mohammadia d'Ingénieurs}}\\[0.5cm]
+    {\large Département Modélisation et Informatique Scientifique}\\[2cm]
+    {\LARGE \textbf{Rapport de Projet de Fin d'Études}}\\[1cm]
+    {\huge \textbf{Système de Recommandation Publicitaire\\Multi-Objectif basé sur les\\Bandits Contextuels Sémantiques}}\\[2cm]
+    {\Large Houbbadi Abderrahim}\\[1cm]
+    {\large Encadrant Académique : Madame Asmae El Kassiri}\\[0.3cm]
+    {\large Encadrant Professionnel : Monsieur Fahd Idrissi Khamlichi}\\[0.3cm]
+    {\large Entreprise d'accueil : Devoteam Maroc}\\[2cm]
+    {\large Année Universitaire 2025--2026}
+\end{titlepage}
+
+%--- Table des matières ---
+\tableofcontents
+\clearpage
+
+%--- Chapitres ---
+\input{chapitre_1}
+\clearpage
+
+\input{chapitre_2}
+\clearpage
+
+\input{chapitre_3}
+\clearpage
+
+\input{chapitre_4}
+\clearpage
+
+\input{conclusion_generale}
+\clearpage
+
+%--- Bibliographie ---
+\printbibliography[heading=bibintoc, title={Références Bibliographiques}]
+
+\end{document}

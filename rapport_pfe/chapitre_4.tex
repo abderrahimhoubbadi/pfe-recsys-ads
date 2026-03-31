@@ -1,0 +1,292 @@
+%========================================================================%
+%  Chapitre 4 — Conception du Système Temps Réel et Évaluation           %
+%========================================================================%
+
+\chapter{Conception du Système Temps Réel et Évaluation}
+\label{chap:systeme_temps_reel}
+
+\section*{Introduction}
+\addcontentsline{toc}{section}{Introduction}
+
+Le Chapitre 3 a isolé le champion \textbf{H-DeepBandit $\times$ $\varepsilon$-Constraint} dans un cadre expérimental contrôlé. Ce quatrième chapitre décrit la traduction de ce modèle en un \textbf{système temps réel opérationnel}, puis évalue ses performances en conditions proches de la production.
+
+L'objectif est double : détailler l'architecture logicielle MLOps conçue pour les inférences sous fortes contraintes de latence avec gestion du \textit{delayed feedback}; et présenter les résultats de la validation temps réel --- simulation de 500 itérations et test de charge.
+
+%------------------------------------------------------------------------
+%  4.1 — Architecture du Pipeline Closed-Loop
+%------------------------------------------------------------------------
+\section{Architecture du Pipeline Closed-Loop}
+\label{sec:architecture_pipeline}
+
+\subsection{Conception du Pipeline}
+
+Dans un environnement publicitaire programmatique, le système de recommandation doit s'insérer dans une \textbf{boucle fermée} (\textit{closed-loop}) où chaque recommandation génère un point de donnée qui met à jour le modèle d'exploration-exploitation.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=1.4cm and 2.2cm,
+    block/.style={rectangle, draw=emiBlue, fill=emiBlue!8, text width=2.6cm,
+                  minimum height=1.3cm, align=center, rounded corners=4pt, font=\small},
+    db/.style={cylinder, draw=emiBlue!70, fill=gray!10, shape border rotate=90,
+               aspect=0.25, text width=1.8cm, minimum height=1.2cm, align=center, font=\small},
+    arrow/.style={-{Stealth[length=3mm]}, thick, emiBlue},
+    darrow/.style={-{Stealth[length=3mm]}, dashed, thick, emiRed}
+]
+    \node[block] (imp)      {Impression\\(\textit{Kafka/PubSub})};
+    \node[block, right=of imp]  (enc)  {Encodage\\Sémantique};
+    \node[block, right=of enc]  (api)  {Service de\\Recommandation};
+    \node[db,    below=of api]  (red)  {Redis\\(State)};
+    \node[block, left=of red]   (fb)   {Delayed\\Feedback};
+
+    \draw[arrow] (imp) -- node[above,font=\scriptsize]{$\mathbf{x}_u,\mathcal{A}_t$} (enc);
+    \draw[arrow] (enc) -- node[above,font=\scriptsize]{$\mathbb{R}^{384}$} (api);
+    \draw[arrow] (api) -- node[right,font=\scriptsize]{Save} (red);
+    \draw[darrow] (red) -- node[left,font=\scriptsize]{Load} (api);
+    \draw[arrow] (api) .. controls +(right:3cm) and +(right:3.5cm) ..
+                 node[right,font=\scriptsize,text=black]{Affichage} (fb);
+    \draw[arrow] (fb)  -- node[above,font=\scriptsize]{MàJ Agent} (api);
+\end{tikzpicture}
+}
+\caption{Architecture fonctionnelle de la boucle de décision (\textit{Closed-Loop}).}
+\label{fig:closed_loop_ch4}
+\end{figure}
+
+Le flux de données suit cinq étapes : (1) capture de l'impression, (2) encodage sémantique via SentenceTransformer \parencite{reimers2019sentence}, (3) sélection par H-DeepBandit × $\varepsilon$-Constraint \parencite{riquelme2018deep,ehrgott2005multicriteria}, (4) collecte du feedback, (5) mise à jour continue du modèle.
+
+\subsection{Le Cœur de Décision : RecommendationService}
+
+La classe \texttt{RecommendationService} orchestre toute la logique de décision. Elle encapsule :
+
+\begin{itemize}
+    \item L'\textbf{encodeur sémantique} : \texttt{all-MiniLM-L6-v2} \parencite{reimers2019sentence} ($\mathbb{R}^{384}$).
+    \item L'\textbf{agent H-DeepBandit} : ensemble de 5 MLP ($768 \to 128 \to 64 \to 1$), deux têtes (engagement, revenue).
+    \item Le \textbf{registre d'annonces} : ajout dynamique via \texttt{expand\_arms()} (zero-shot).
+    \item La \textbf{politique MOO} : $\varepsilon$-Constraint maximisant le CTR sous contrainte de revenue.
+\end{itemize}
+
+\begin{listing}[htbp]
+\begin{minted}[frame=lines, framesep=2mm, bgcolor=gray!8, fontsize=\footnotesize, breaklines]{python}
+def recommend(self, user_text: str, available_ads: List[AdInfo]):
+    user_emb = self.encoder.encode(user_text)          # 1. Encodage
+    for ad in available_ads:                            # 2. Zero-Shot Cold-Start
+        if ad.ad_id not in self.ad_id_to_idx:
+            ad_emb = self.encoder.encode(ad.title + " " + ad.description)
+            self.agent.expand_arms({ad.ad_id: ad_emb})
+    predictions = self.agent.predict_all(context=user_emb)  # 3. Prédiction
+    selected_idx = epsilon_constraint_policy(           # 4. Politique MOO
+        predictions=predictions, epsilon=self.epsilon)
+    return self.idx_to_ad_id[selected_idx]
+\end{minted}
+\caption{Méthode de recommandation principale (\texttt{RecommendationService}).}
+\label{lst:recommend_ch4}
+\end{listing}
+
+\subsection{L'API REST (FastAPI)}
+
+L'API expose quatre \textit{endpoints} :
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{l l L{7cm}}
+        \toprule
+        \textbf{Méthode} & \textbf{Endpoint} & \textbf{Description} \\
+        \midrule
+        POST & \texttt{/recommend} & Sélection de l'annonce optimale \\
+        POST & \texttt{/feedback}  & Feedback (clic, conversion, revenue) avec delayed feedback \\
+        GET  & \texttt{/metrics}   & Statistiques glissantes (CTR, revenue, latence) \\
+        GET  & \texttt{/health}    & Sonde de monitoring Cloud Run / Kubernetes \\
+        \bottomrule
+    \end{tabular}
+    \caption{Endpoints de l'API REST.}
+    \label{tab:api_endpoints_ch4}
+\end{table}
+
+\subsection{L'Abstraction d'Infrastructure (Factory Pattern)}
+
+Toutes les interactions réseau utilisent le \textit{design pattern Factory} (\texttt{src/infra/factory.py}). Le code métier ne connaît que trois interfaces abstraites : \texttt{MessageProducer}, \texttt{MessageConsumer}, \texttt{StateStore}. La variable d'environnement \texttt{QUEUE\_BACKEND} instancie soit \textbf{Kafka} (développement local), soit \textbf{GCP Pub/Sub} (production).
+
+%------------------------------------------------------------------------
+%  4.2 — Delayed Feedback
+%------------------------------------------------------------------------
+\section{Gestion du \textit{Delayed Feedback} (FALCON)}
+\label{sec:delayed_feedback_ch4}
+
+\subsection{Problématique du Biais de Pénalisation}
+
+Si le clic ($O_1$) est immédiat, la conversion ($O_2$) arrive des heures plus tard. Sans mécanisme adapté, le modèle apprend \texttt{revenue = 0} pour toutes les impressions $\to$ \textbf{biais systémique} qui bloque la politique $\varepsilon$-Constraint.
+
+\subsection{Implémentation Inspirée de FALCON}
+
+Inspirée de \parencite{ktena2019addressing}, la solution utilise un champ \texttt{feedback\_type} à trois modes via \texttt{POST /feedback} :
+
+\begin{itemize}
+    \item \textbf{\texttt{click}} (immédiat) : mise à jour de la tête engagement uniquement ; impression stockée dans un buffer \textit{pending}.
+    \item \textbf{\texttt{conversion}} (asynchrone) : réconciliation avec l'impression d'origine + facteur de correction :
+    $$\text{Revenue Corrigé} = \frac{\text{Revenue Effectif}}{\text{Confirm Rate}}, \quad \text{Confirm Rate} = \frac{N_{\text{Total}} - N_{\text{Pending}}}{N_{\text{Total}}}$$
+    \item \textbf{\texttt{full}} : clic et revenue disponibles simultanément (simulation).
+\end{itemize}
+
+Un processus de \textit{garbage collection} expire automatiquement les impressions en attente depuis plus de 24 heures (seuil d'attribution standard en marketing digital).
+
+%------------------------------------------------------------------------
+%  4.3 — Déploiement
+%------------------------------------------------------------------------
+\section{Architecture de Déploiement Cloud-Native}
+\label{sec:deploiement_ch4}
+
+\subsection{Environnement Local (Docker Compose)}
+
+5 conteneurs forment le stack de développement :
+
+\begin{enumerate}
+    \item \textbf{API FastAPI} : interface d'inférence temps réel.
+    \item \textbf{Consumer Streaming} : worker closed-loop via Kafka.
+    \item \textbf{Kafka + Zookeeper} : message broker des événements.
+    \item \textbf{Redis} : persistence des poids PyTorch \parencite{paszke2019pytorch} du H-DeepBandit.
+    \item \textbf{Grafana} : monitoring des métriques du pipeline.
+\end{enumerate}
+
+\subsection{Déploiement Serverless sur GCP (Production)}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{l l l}
+        \toprule
+        \textbf{Composant} & \textbf{Docker (Local)} & \textbf{GCP (Production)} \\
+        \midrule
+        Hébergement API   & Uvicorn interne             & \textbf{Cloud Run} (autoscaling $0 \to N$) \\
+        Message Broker    & Apache Kafka                & \textbf{Cloud Pub/Sub} \\
+        State Store       & Redis Alpine 7              & \textbf{Memorystore} (managed) \\
+        CI/CD             & Shell local                 & \textbf{Cloud Build} + Artifact Registry \\
+        \bottomrule
+    \end{tabular}
+    \caption{Mapping de l'infrastructure locale vers GCP.}
+    \label{tab:mapping_infra_ch4}
+\end{table}
+
+Le déploiement est automatisé via \texttt{deploy/gcp\_deploy.sh} (Infrastructure as Code). Cloud Run permet de descendre à zéro instances (économies lors d'interruptions de trafic) et de scaler exponentiellement lors des pics.
+
+%------------------------------------------------------------------------
+%  4.4 — Validation Temps Réel
+%------------------------------------------------------------------------
+\section{Validation Temps Réel}
+\label{sec:validation_temps_reel_ch4}
+
+\subsection{Test d'Intégration End-to-End}
+
+Un test d'intégration en 9 étapes reproduit le cycle de vie complet d'un système publicitaire (de l'initialisation du service au test des endpoints FastAPI), incluant le delayed feedback. \textbf{Résultat : 9/9 réussis}, avec une latence d'inférence mesurée à $\sim 8$~ms.
+
+\subsection{Simulation Temps Réel (500 itérations)}
+
+Une simulation de 500 itérations a été conduite avec 10 profils utilisateurs et 10 annonces, reproduisant les quatre phases du cycle de vie :
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{l l L{7cm}}
+        \toprule
+        \textbf{Phase} & \textbf{Timestep} & \textbf{Description} \\
+        \midrule
+        Warm-up    & $t = 0 \to 100$   & Apprentissage initial avec 6 annonces \\
+        Stable     & $t = 100 \to 300$ & Régime convergé, exploitation sémantique \\
+        Cold-Start & $t = 300$          & Injection de 4 nouvelles annonces ($6 \to 10$ bras) \\
+        Recovery   & $t = 350 \to 500$ & Adaptation via zero-shot transfer \\
+        \bottomrule
+    \end{tabular}
+    \caption{Phases de la simulation temps réel.}
+    \label{tab:phases_sim_ch4}
+\end{table}
+
+\subsubsection{Évolution des KPIs}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{realtime_kpi_evolution.png}
+    \caption{Évolution des KPIs sur 500 itérations : (a) CTR glissant, (b) Revenue glissant, (c) Latence, (d) Conversions en attente (buffer delayed feedback). La ligne verticale indique le cold-start shock à $t=300$.}
+    \label{fig:kpi_evolution_ch4}
+\end{figure}
+
+\textbf{Observations} :
+\begin{itemize}
+    \item \textbf{Convergence} : le CTR passe de $\sim 0.08$ (exploration) à $\sim 0.34$ en phase stable.
+    \item \textbf{Latence} : $\sim 9$~ms en moyenne, $\sim 10$~ms post cold-start (6 $\to$ 10 bras) --- bien sous le SLA de 50~ms du RTB \parencite{yuan2013real}.
+    \item \textbf{Delayed feedback} : le buffer fluctue entre 0 et 8 --- le mécanisme FALCON fonctionne correctement \parencite{ktena2019addressing}.
+\end{itemize}
+
+\subsubsection{Résilience au Cold-Start}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{realtime_cold_start_recovery.png}
+    \caption{Zoom sur la récupération post cold-start ($t = 250 \to 450$) : injections de 4 nouvelles annonces absorbées quasi-instantanément grâce au zero-shot transfer.}
+    \label{fig:cold_start_ch4}
+\end{figure}
+
+\subsubsection{Distribution des Sélections}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{realtime_arm_distribution.png}
+    \caption{Distribution des annonces sélectionnées : le modèle exploite les annonces à haute affinité sémantique tout en maintenant une exploration résiduelle.}
+    \label{fig:arm_dist_ch4}
+\end{figure}
+
+\subsection{Test de Charge}
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{C{1.8cm} C{2cm} C{2cm} C{2cm} C{2cm} C{1.8cm}}
+        \toprule
+        \textbf{Conc.} & \textbf{Lat. Moy.} & \textbf{P95} & \textbf{P99} & \textbf{RPS} & \textbf{Erreurs} \\
+        \midrule
+        1  & 11,8~ms   & 19,4~ms   & 21,3~ms   & \textbf{84}  & 0 \\
+        5  & 353,9~ms  & 376,2~ms  & 409,9~ms  & 14,1 & 0 \\
+        10 & 738,1~ms  & 779,9~ms  & 823,8~ms  & 13,5 & 0 \\
+        25 & 1\,778~ms & 1\,886~ms & 1\,907~ms & 13,9 & 0 \\
+        50 & 3\,495~ms & 3\,725~ms & 3\,795~ms & 14,0 & 0 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Résultats du test de charge (single-worker Uvicorn).}
+    \label{tab:load_test_ch4}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{load_test_latency.png}
+    \caption{Latence (moy., P95, P99) et débit (RPS) en fonction de la concurrence.}
+    \label{fig:load_test_ch4}
+\end{figure}
+
+En mode \textit{single-worker}, le système atteint \textbf{84 req/s} avec une latence P95 de 19,4~ms (concurrence = 1). Le débit se stabilise à $\sim14$~req/s au-delà de 5 threads concurrents (CPU-bound sur SentenceTransformer). En production Cloud Run, le scaling horizontal absorbe la charge totale. \textbf{Zéro erreur} à tous les niveaux de concurrence.
+
+%------------------------------------------------------------------------
+%  4.5 — Limites et Perspectives
+%------------------------------------------------------------------------
+\section{Limites et Perspectives}
+\label{sec:limites_ch4}
+
+\begin{enumerate}
+    \item \textbf{Données simulées} : validation sur \texttt{SemanticRewardSimulator}; un déploiement sur données Google Ads réelles est nécessaire \parencite{chapelle2014simple}.
+    \item \textbf{Single-worker} : le scaling horizontal multi-worker avec état partagé Redis reste à valider.
+    \item \textbf{Embeddings figés} : un fine-tuning de \texttt{all-MiniLM-L6-v2} \parencite{reimers2019sentence} sur données publicitaires réelles améliorerait les représentations sémantiques.
+    \item \textbf{Google Ads API} : intégration avec le flux réel d'impressions pour une validation en production.
+    \item \textbf{Deep RL} : extension vers PPO/SAC avec historique d'états pour capturer les dynamiques séquentielles.
+    \item \textbf{A/B Testing} : protocole de test contrôlé pour quantifier le gain business réel chez les clients Devoteam.
+\end{enumerate}
+
+%------------------------------------------------------------------------
+%  Conclusion du chapitre
+%------------------------------------------------------------------------
+\section*{Conclusion du Chapitre}
+\addcontentsline{toc}{section}{Conclusion du Chapitre}
+
+Ce chapitre a démontré la viabilité du système en conditions temps réel :
+\begin{itemize}
+    \item Une architecture \textbf{closed-loop} complète (impression $\to$ encodage $\to$ décision $\to$ feedback $\to$ MàJ).
+    \item Un mécanisme \textbf{FALCON} garantissant l'intégrité des estimations de revenue malgré les délais de conversion.
+    \item Un déploiement \textbf{dual} Docker/GCP via le pattern Factory.
+    \item Une \textbf{latence de $\sim9$~ms} et un débit de \textbf{84 req/s}, avec zéro erreur sous charge.
+\end{itemize}
+
+Ces résultats valident le passage du prototype de recherche au système opérationnel, clôturant le triptyque \textit{théorie--expérimentation--industrialisation}.
