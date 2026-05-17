@@ -1,0 +1,17 @@
+{
+  "random_ctr": 0.0034693344451502445,
+  "bts_ctr": 0.0049,
+  "linucb_ips": 0.0018627299034363728,
+  "linucb_snips": 0.002466851680542707,
+  "linucb_agreement": 0.009438801682568996,
+  "linucb_matched": 12972,
+  "deepbandit_ips": 0.001164206189647733,
+  "deepbandit_snips": 0.0011475786091347257,
+  "deepbandit_agreement": 0.012681115920737932,
+  "deepbandit_matched": 17428,
+  "n_total": 1374327,
+  "w_max": 100.0,
+  "dataset_n_events": 1374327,
+  "dataset_n_actions": 80,
+  "dataset_context_dim": 26
+}
